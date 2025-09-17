@@ -15,7 +15,7 @@ on:
         type: choice
         options:
           - webster_test
-          - Stage
+          - webseter-dev
           - Prod
       location:
         description: 'Azure Region'
