@@ -1,0 +1,117 @@
+name: Deploy Azure Storage Account
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      resourceGroup:
+        description: 'Resource Group Name'
+        required: true
+      subscriptionId:
+        description: 'Azure Subscription'
+        required: true
+        type: choice
+        options:
+          - webster_test
+          - Stage
+          - Prod
+      location:
+        description: 'Azure Region'
+        required: true
+        type: choice
+        options:
+          - eastus
+          - westus
+          - southcentralus
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RESOURCE_GROUP: ${{ inputs.resourceGroup }}
+      LOCATION: ${{ inputs.location }}
+      SUBSCRIPTION_ID: ${{ inputs.subscriptionId }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          subscription-id: ${{ env.SUBSCRIPTION_ID }}
+
+      - name: Run Azure CLI Script
+        uses: azure/CLI@v1
+        with:
+          azcliversion: 2.72.0
+          inlineScript: |
+            set -e
+            echo "Running Azure CLI commands..."
+
+            STORAGE_ACCOUNT="mystorage${GITHUB_RUN_ID}"  # Example dynamic name
+
+            progress() {
+              local percent=$1
+              local message=$2
+              echo -ne "[$percent%] $message...\n"
+            }
+
+            progress 5 "Checking Resource Group"
+            RG_EXISTS=$(az group exists --name "$RESOURCE_GROUP")
+            if [ "$RG_EXISTS" = false ]; then
+              progress 10 "Creating Resource Group"
+              az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+            else
+              progress 10 "Resource Group already exists"
+            fi
+
+            progress 20 "Checking Storage Account"
+            SA_EXISTS=$(az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null)
+
+            if [ -z "$SA_EXISTS" ]; then
+              progress 30 "Creating Storage Account"
+              az storage account create \
+                --name "$STORAGE_ACCOUNT" \
+                --resource-group "$RESOURCE_GROUP" \
+                --location "$LOCATION" \
+                --sku Standard_LRS \
+                --kind StorageV2 \
+                --access-tier Hot \
+                --https-only true \
+                --min-tls-version TLS1_2 \
+                --enable-large-file-share \
+                --public-network-access Enabled \
+                --routing-choice MicrosoftRouting
+            else
+              progress 30 "Storage Account already exists"
+            fi
+
+            progress 50 "Configuring Blob soft delete"
+            az storage account blob-service-properties update \
+              --account-name "$STORAGE_ACCOUNT" \
+              --resource-group "$RESOURCE_GROUP" \
+              --enable-delete-retention true \
+              --delete-retention-days 7
+
+            progress 65 "Configuring Container soft delete"
+            az storage account blob-service-properties update \
+              --account-name "$STORAGE_ACCOUNT" \
+              --resource-group "$RESOURCE_GROUP" \
+              --container-delete-retention-days 7 \
+              --enable-container-delete-retention true
+
+            progress 80 "Configuring File Share soft delete"
+            az storage account file-service-properties update \
+              --resource-group "$RESOURCE_GROUP" \
+              --account-name "$STORAGE_ACCOUNT" \
+              --enable-delete-retention true \
+              --delete-retention-days 7
+
+            progress 95 "Verifying configuration"
+            az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" \
+              --query "{name:name, location:primaryLocation, sku:sku.name, kind:kind, enableHttpsTrafficOnly:enableHttpsTrafficOnly, minimumTlsVersion:minimumTlsVersion}" -o table
+
+            progress 100 "Storage Account setup completed successfully!"
