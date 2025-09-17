@@ -23,7 +23,7 @@ on:
         type: choice
         options:
           - eastus
-          - westus
+          - centralus 
           - southcentralus
 
 jobs:
