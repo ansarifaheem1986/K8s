@@ -1,4 +1,4 @@
-name: Deploy Azure Storage Account
+name: Deploy Azure Storage Account testing
 
 on:
   push:
