@@ -72,13 +72,7 @@ jobs:
 
             if [ -z "$SA_EXISTS" ]; then
               progress 30 "Creating Storage Account"
-              az storage account create \
-                --name $STORAGE_ACCOUNT \
-                --resource-group $RESOURCE_GROUP \
-                --location $LOCATION \
-                --sku Standard_LRS \
-                --kind StorageV2 \
-                --hns false \
+              az storage account create --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --location $LOCATION --sku Standard_LRS --kind StorageV2 --hns false \
                 --access-tier Hot \
                 --allow-blob-public-access false \
                 --enable-nfs-v3 false \
