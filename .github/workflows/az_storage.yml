@@ -1,4 +1,4 @@
-name: Deploy Azure Storage Account testing
+name: Deploy Azure Storage Account
 
 on:
   push:
@@ -23,7 +23,7 @@ on:
         type: choice
         options:
           - eastus
-          - centralus 
+          - centralus
           - southcentralus
 
 jobs:
@@ -42,15 +42,15 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Set Azure Subscription Context
+        run: az account set --subscription $SUBSCRIPTION_ID
+
       - name: Run Azure CLI Script
         uses: azure/CLI@v1
         with:
           azcliversion: 2.72.0
           inlineScript: |
-            set -e
-            echo "Running Azure CLI commands..."
-
-            STORAGE_ACCOUNT="mystorage${GITHUB_RUN_ID}"  # Example dynamic name
+            STORAGE_ACCOUNT="aactzwestusauditpstg1"  # must be globally unique
 
             progress() {
               local percent=$1
@@ -59,58 +59,64 @@ jobs:
             }
 
             progress 5 "Checking Resource Group"
-            RG_EXISTS=$(az group exists --name "$RESOURCE_GROUP")
+            RG_EXISTS=$(az group exists --name $RESOURCE_GROUP)
             if [ "$RG_EXISTS" = false ]; then
               progress 10 "Creating Resource Group"
-              az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+              az group create --name $RESOURCE_GROUP --location $LOCATION >/dev/null
             else
               progress 10 "Resource Group already exists"
             fi
 
             progress 20 "Checking Storage Account"
-            SA_EXISTS=$(az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null)
+            SA_EXISTS=$(az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query "name" -o tsv 2>/dev/null)
 
             if [ -z "$SA_EXISTS" ]; then
               progress 30 "Creating Storage Account"
               az storage account create \
-                --name "$STORAGE_ACCOUNT" \
-                --resource-group "$RESOURCE_GROUP" \
-                --location "$LOCATION" \
+                --name $STORAGE_ACCOUNT \
+                --resource-group $RESOURCE_GROUP \
+                --location $LOCATION \
                 --sku Standard_LRS \
                 --kind StorageV2 \
+                --hns false \
                 --access-tier Hot \
+                --allow-blob-public-access false \
+                --enable-nfs-v3 false \
+                --allow-cross-tenant-replication false \
                 --https-only true \
                 --min-tls-version TLS1_2 \
+                --require-infrastructure-encryption false \
                 --enable-large-file-share \
                 --public-network-access Enabled \
-                --routing-choice MicrosoftRouting
+                --routing-choice MicrosoftRouting >/dev/null
             else
-              progress 30 "Storage Account already exists"
+              progress 30 "Storage Account already exists, updating policies"
             fi
 
             progress 50 "Configuring Blob soft delete"
             az storage account blob-service-properties update \
-              --account-name "$STORAGE_ACCOUNT" \
-              --resource-group "$RESOURCE_GROUP" \
+              --account-name $STORAGE_ACCOUNT \
+              --resource-group $RESOURCE_GROUP \
               --enable-delete-retention true \
-              --delete-retention-days 7
+              --delete-retention-days 7 >/dev/null
 
             progress 65 "Configuring Container soft delete"
             az storage account blob-service-properties update \
-              --account-name "$STORAGE_ACCOUNT" \
-              --resource-group "$RESOURCE_GROUP" \
+              --account-name $STORAGE_ACCOUNT \
+              --resource-group $RESOURCE_GROUP \
               --container-delete-retention-days 7 \
-              --enable-container-delete-retention true
+              --enable-container-delete-retention true >/dev/null
 
             progress 80 "Configuring File Share soft delete"
             az storage account file-service-properties update \
-              --resource-group "$RESOURCE_GROUP" \
-              --account-name "$STORAGE_ACCOUNT" \
+              --resource-group $RESOURCE_GROUP \
+              --account-name $STORAGE_ACCOUNT \
               --enable-delete-retention true \
-              --delete-retention-days 7
+              --delete-retention-days 7 >/dev/null
 
             progress 95 "Verifying configuration"
-            az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" \
+            az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP \
               --query "{name:name, location:primaryLocation, sku:sku.name, kind:kind, enableHttpsTrafficOnly:enableHttpsTrafficOnly, minimumTlsVersion:minimumTlsVersion}" -o table
 
             progress 100 "Storage Account setup completed successfully!"
+            echo "Storage Account '$STORAGE_ACCOUNT' is ready with all policies applied."
