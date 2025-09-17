@@ -23,7 +23,7 @@ on:
         options:
           - eastus
           - westus
-          - South Central US
+          - Southcentralus
  
 jobs:
   deploy:
