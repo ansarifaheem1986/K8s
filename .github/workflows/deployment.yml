@@ -65,7 +65,7 @@ jobs:
     name: 'Setting up AKS in [${{ inputs.environment }}] [${{ inputs.location }}]'
     if: inputs.environment == 'nonprod'
     environment: stage
-    runs-on: ubuntu-latest-aa
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
@@ -161,7 +161,7 @@ jobs:
     name: 'Setting up AKS in [${{ inputs.environment }}] [${{ inputs.location }}]'
     if: inputs.environment == 'prod'
     environment: prod
-    runs-on: ubuntu-latest-aa
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
