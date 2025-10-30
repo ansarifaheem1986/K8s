@@ -23,6 +23,7 @@ on:
         options:
           - 'east'
           - 'west'
+          - 'both'
         required: true
         default: 'east'
       deleteResources:
