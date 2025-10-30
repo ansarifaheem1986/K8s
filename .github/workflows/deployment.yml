@@ -1,0 +1,266 @@
+name: AKS Cluster Set-up Env
+
+# Changelog
+# - Jobs separated based on environment for approvals
+# - Prod context uses Azure actions
+# - Streamline jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: (Required) AKS environment
+        options:
+          - 'dev'
+          - 'stage'
+          - 'prod'
+        required: true
+        default: 'dev'
+      location:
+        type: choice
+        description: (Required) AKS region
+        options:
+          - 'east'
+          - 'west'
+        required: true
+        default: 'east'
+      deleteResources:
+        type: boolean
+        description: Remove previous resources (to have a fresh start)?
+        required: false
+        default: false
+      namespace:
+        type: string
+        description: (Required) Namespace to create or remove resources from
+        required: true
+      cloudsmithsecret:
+        type: boolean
+        description: Add 'cloudsmithsecret' to the above namespace?
+        required: false
+        default: true
+      csidriver:
+        type: boolean
+        description: Install csi driver?
+        required: false
+        default: true
+      secretproviderclass:
+        type: string
+        description: Please enter the name of your SecretProviderClass file (including file extension) under the csi folder. Otherwise, leave blank
+        required: false
+      spcName:
+        type: string
+        description: Please enter the SecretProviderClass NAME (the name field inside of the file)
+        required: false
+
+# If using for another project, please replace your resource group and AKS names HERE
+#env:
+  #P_RG_EAUS: ct-p-zeaus-loyprofmgr-rg
+  #P_RG_WEUS: ct-p-zweus-loyprofmgr-rg
+  #P_AKS_EAUS: ct-p-zeaus-loyprofmgr-aks
+  #P_AKS_WEUS: ct-p-zweus-loyprofmgr-aks
+
+jobs:
+  aks-cluster-setup-np:
+    name: 'Setting up AKS in [${{ inputs.environment }}] [${{ inputs.location }}]'
+    if: inputs.environment == 'nonprod'
+    environment: stage
+    runs-on: ubuntu-latest-aa
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: main
+      - name: 'NonProd Azure Login'
+        uses: Azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.SERVICE_PRINCIPAL_ID }}","clientSecret":"${{ secrets.SERVICE_PRINCIPAL_SECRET }}","subscriptionId":"${{ secrets.SUBSCRIPTION_ID }}","tenantId":"${{ vars.TENANT_ID }}"}'
+      - name: NonProd EAST AKS Context
+        run: |
+          az aks get-credentials --resource-group $NP_RG_EAUS --name $NP_AKS_EAUS --admin
+      - name: Set Environment variables
+        run: |
+          echo "resourcegroup=$NP_RG_EAUS" >> $GITHUB_ENV
+          echo "SP_ID=${{ secrets.SERVICE_PRINCIPAL_ID }}" >> $GITHUB_ENV
+          echo "SP_SECRET=${{ secrets.SERVICE_PRINCIPAL_SECRET }}" >> $GITHUB_ENV
+
+      - name: Validate Environment variables
+        run: |
+          echo "Environment variables for ${{ inputs.environment }} ${{ inputs.location }}"
+          echo "Resource Group: $resourcegroup"
+          echo "Service Principal ID set: $SP_ID"
+          echo "Service Principal Secret set: $SP_SECRET"
+
+      - name: Delete existing resources (optional)
+        if: inputs.deleteResources == true
+        continue-on-error: true
+        run: |
+          echo "### Deleting ${{ inputs.namespace }} namespace and resources associated with it (cloudsmithsecret, secrets-store-creds, etc.)... ###"
+          kubectl delete namespace ${{ inputs.namespace }}
+          echo ""
+          sleep 5
+          echo "### Deleting SecretProviderClass for ${{ inputs.spcName }} in namespace ${{ inputs.namespace }} ###"
+          kubectl delete SecretProviderClass ${{ inputs.spcName }} -n ${{ inputs.namespace }}
+
+      - name: Create ${{ inputs.namespace }} namespace
+        if: inputs.namespace != ''
+        continue-on-error: true
+        run: |
+          kubectl create namespace ${{ inputs.namespace }} 
+          echo ""
+          sleep 5
+          kubectl describe namespace ${{ inputs.namespace }} 
+          echo "### SUCCESS! Namespace created! ###"
+
+      - name: package-manager-auth
+        id: authenticate
+        uses: AAInternal/package-manager-auth@v0
+
+      - name: Create cloudsmithsecret and secrets-store-creds
+        if: inputs.cloudsmithsecret == true
+        run: |
+          kubectl create secret docker-registry cloudsmithsecret --namespace ${{ inputs.namespace }} --docker-server=https://docker.aa.com/ --docker-username=${{ steps.authenticate.outputs.PACKAGE_REGISTRY_USER }} --docker-password=${{ steps.authenticate.outputs.PACKAGE_REGISTRY_TOKEN }}
+          echo ""
+          sleep 5
+          kubectl describe secret cloudsmithsecret -n ${{ inputs.namespace }}
+          echo "### SUCCESS! cloudsmithsecret created! ###"
+          echo "### Creating secrets-store-creds... ###"
+          kubectl create secret generic --namespace ${{ inputs.namespace }} secrets-store-creds --from-literal clientid=$SP_ID --from-literal clientsecret=$SP_SECRET
+          kubectl label secret --namespace ${{ inputs.namespace }} secrets-store-creds secrets-store.csi.k8s.io/used=true
+          echo ""
+          sleep 5
+          kubectl describe secret secrets-store-creds -n ${{ inputs.namespace }}
+          echo "### SUCCESS! Secret created! ###"
+
+      - name: Add and Deploy CSI Driver
+        if: inputs.csidriver == true
+        continue-on-error: true
+        run: |
+          echo "### Using helm to deploy Key Vault provider and CSI Driver... ###"
+          helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+          helm upgrade csi csi-secrets-store-provider-azure/csi-secrets-store-provider-azure
+          echo ""
+          sleep 5
+          echo "### SUCCESS! CSI Driver installed! ###"
+
+      - name: Apply SecretsProviderClass YAML in kubectl
+        if: inputs.secretproviderclass != ''
+        run: |
+          cd main
+          echo "### Applying SPC file with kubectl... ###"
+          kubectl apply -f csi/${{ inputs.secretproviderclass }}
+          echo ""
+          sleep 5
+          kubectl describe SecretProviderClass ${{ inputs.spcName }} -n ${{ inputs.namespace }}
+          echo ""
+          echo "### SUCCESS! SecretProviderClass has been applied! ###"
+
+  aks-cluster-setup-p:
+    name: 'Setting up AKS in [${{ inputs.environment }}] [${{ inputs.location }}]'
+    if: inputs.environment == 'prod'
+    environment: prod
+    runs-on: ubuntu-latest-aa
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: main
+      - name: Prod Azure Login
+        uses: Azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.SERVICE_PRINCIPAL_ID }}","clientSecret":"${{ secrets.SERVICE_PRINCIPAL_SECRET }}","subscriptionId":"${{ secrets.SUBSCRIPTION_ID }}","tenantId":"${{ vars.TENANT_ID }}"}'
+      - name: Prod EAST AKS Context
+        if: inputs.environment == 'prod' && inputs.location == 'east'
+        run: |
+          az aks get-credentials --resource-group $P_RG_EAUS --name $P_AKS_EAUS --admin
+      - name: Prod WEST AKS Context
+        if: inputs.environment == 'prod' && inputs.location == 'west'
+        run: |
+          az aks get-credentials --resource-group $P_RG_WEUS --name $P_AKS_WEUS --admin
+      - name: Set Environment variables
+        run: |
+          if [ ${{ inputs.environment }} == "prod" ] && [ ${{ inputs.location }} == "east" ]; then
+          echo "resourcegroup=$P_RG_EAUS" >> $GITHUB_ENV
+          echo "SP_ID=${{ secrets.SERVICE_PRINCIPAL_ID }}" >> $GITHUB_ENV
+          echo "SP_SECRET=${{ secrets.SERVICE_PRINCIPAL_SECRET }}" >> $GITHUB_ENV
+          fi
+          if [ ${{ inputs.environment }} == "prod" ] && [ ${{ inputs.location }} == "west" ]; then
+          echo "resourcegroup=$P_RG_WEUS" >> $GITHUB_ENV
+          echo "SP_ID=${{ secrets.SERVICE_PRINCIPAL_ID }}" >> $GITHUB_ENV
+          echo "SP_SECRET=${{ secrets.SERVICE_PRINCIPAL_SECRET }}" >> $GITHUB_ENV
+          fi
+
+      - name: Validate Environment variables
+        run: |
+          echo "Environment variables for ${{ inputs.environment }} ${{ inputs.location }}"
+          echo "Resource Group: $resourcegroup"
+          echo "Service Principal ID set: $SP_ID"
+          echo "Service Principal Secret set: $SP_SECRET"
+
+      - name: Delete existing resources (optional)
+        if: inputs.deleteResources == true
+        continue-on-error: true
+        run: |
+          echo "### Deleting ${{ inputs.namespace }} namespace and resources associated with it (cloudsmithsecret, secrets-store-creds, etc.)... ###"
+          kubectl delete namespace ${{ inputs.namespace }}
+          echo ""
+          sleep 5
+          echo "### Deleting SecretProviderClass for ${{ inputs.spcName }} in namespace ${{ inputs.namespace }} ###"
+          kubectl delete SecretProviderClass ${{ inputs.spcName }} -n ${{ inputs.namespace }}
+
+      - name: Create ${{ inputs.namespace }} namespace
+        if: inputs.namespace != ''
+        continue-on-error: true
+        run: |
+          kubectl create namespace ${{ inputs.namespace }} 
+          echo ""
+          sleep 5
+          kubectl describe namespace ${{ inputs.namespace }} 
+          echo "### SUCCESS! Namespace created! ###"
+
+      - name: package-manager-auth
+        id: authenticate
+        uses: AAInternal/package-manager-auth@v0
+
+      - name: Create cloudsmithsecret and secrets-store-creds
+        if: inputs.cloudsmithsecret == true
+        run: |
+          kubectl create secret docker-registry cloudsmithsecret --namespace ${{ inputs.namespace }} --docker-server=https://docker.aa.com/ --docker-username=${{ steps.authenticate.outputs.PACKAGE_REGISTRY_USER }} --docker-password=${{ steps.authenticate.outputs.PACKAGE_REGISTRY_TOKEN }}
+          echo ""
+          sleep 5
+          kubectl describe secret cloudsmithsecret -n ${{ inputs.namespace }}
+          echo "### SUCCESS! cloudsmithsecret created! ###"
+          echo "### Creating secrets-store-creds... ###"
+          kubectl create secret generic --namespace ${{ inputs.namespace }} secrets-store-creds --from-literal clientid=$SP_ID --from-literal clientsecret=$SP_SECRET
+          kubectl label secret --namespace ${{ inputs.namespace }} secrets-store-creds secrets-store.csi.k8s.io/used=true
+          echo ""
+          sleep 5
+          kubectl describe secret secrets-store-creds -n ${{ inputs.namespace }}
+          echo "### SUCCESS! Secret created! ###"
+
+      - name: Add and Deploy CSI Driver
+        if: inputs.csidriver == true
+        continue-on-error: true
+        run: |
+          echo "### Using helm to deploy Key Vault provider and CSI Driver... ###"
+          helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+          helm upgrade csi csi-secrets-store-provider-azure/csi-secrets-store-provider-azure
+          echo ""
+          sleep 5
+          echo "### SUCCESS! CSI Driver installed! ###"
+
+      - name: Apply SecretsProviderClass YAML in kubectl
+        if: inputs.secretproviderclass != ''
+        run: |
+          cd main
+          echo "### Applying SPC file with kubectl... ###"
+          kubectl apply -f csi/${{ inputs.secretproviderclass }}
+          echo ""
+          sleep 5
+          kubectl describe SecretProviderClass ${{ inputs.spcName }} -n ${{ inputs.namespace }}
+          echo ""
+          echo "### SUCCESS! SecretProviderClass has been applied! ###"
