@@ -1,0 +1,77 @@
+name: AKS Cluster Set-up Env
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: (Required) AKS environment
+        options:
+          - 'dev'
+          - 'stage'
+          - 'prod'
+        required: true
+        default: 'dev'
+      location:
+        type: choice
+        description: (Required) AKS region
+        options:
+          - 'east'
+          - 'west'
+          - 'both'
+        required: true
+        default: 'east'
+      deleteResources:
+        type: boolean
+        description: Remove previous resources (to have a fresh start)?
+        required: false
+        default: false
+      namespace:
+        type: string
+        description: (Required) Namespace to create or remove resources from
+        required: true
+      cloudsmithsecret:
+        type: boolean
+        description: Add 'cloudsmithsecret' to the above namespace?
+        required: false
+        default: true
+      csidriver:
+        type: boolean
+        description: Install csi driver?
+        required: false
+        default: true
+      secretproviderclass:
+        type: string
+        description: Please enter the name of your SecretProviderClass file (including file extension) under the csi folder. Otherwise, leave blank
+        required: false
+      spcName:
+        type: string
+        description: Please enter the SecretProviderClass NAME (the name field inside of the file)
+        required: false
+
+jobs:
+  BuildMatrix:
+    runs-on: ubuntu-latest
+    outputs:
+      REGION_MATRIX: ${{ steps.set-matrix.outputs.region_matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          if [[ "${{ inputs.environment }}" == "dev" ]]; then 
+            matrix='["dev-east","dev-west"]'
+          elif [[ "${{ inputs.environment }}" == "stage" ]]; then
+            matrix='["stage-east","stage-west"]'
+          elif [[ "${{ inputs.environment }}" == "prod" ]]; then
+            matrix='["prod-east","prod-west"]'
+          fi
+          echo "region_matrix=$matrix" >> $GITHUB_OUTPUT
+
+  Deploy:
+    needs: BuildMatrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: ${{ fromJson(needs.BuildMatrix.outputs.REGION_MATRIX) }}
+    steps:
+      - name: Echo deployment target
+        run: echo "Deploying to ${{ matrix.region }} in namespace ${{ inputs.namespace }}"
