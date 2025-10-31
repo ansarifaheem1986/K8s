@@ -54,14 +54,35 @@ on:
         description: Please enter the SecretProviderClass NAME (the name field inside of the file)
         required: false
 
-# If using for another project, please replace your resource group and AKS names HERE
-#env:
-  #P_RG_EAUS: ct-p-zeaus-loyprofmgr-rg
-  #P_RG_WEUS: ct-p-zweus-loyprofmgr-rg
-  #P_AKS_EAUS: ct-p-zeaus-loyprofmgr-aks
-  #P_AKS_WEUS: ct-p-zweus-loyprofmgr-aks
-
 jobs:
+  BuildMatrix:
+    runs-on: ubuntu-latest-aa
+    outputs:
+      REGION_MATRIX: ${{setps.set-matrix.outputs.region_matrix}}
+        echo "$REGION_MATRIX"
+    steps:
+      - id: set-matrix
+        run : | 
+          if [[ ${{inputs.environment}} == "dev" ]]; then 
+            matrix='["dev-east","dev-west"]'
+          fi 
+          if [[ ${{inputs.environment}} == "stage" ]]; then
+            matrix='["stage-east","stage-west"]'
+          fi
+          if [[ ${{inputs.environment}} == "prod" ]]; then
+            matrix='["prod-east","prod-west"]'
+          fi
+          echo "region_matrix=$matrix" >> $GITHUB_OUTPUT  
+  Deploy:
+    needs: BuildMatrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: ${{ fromJson(needs.BuildMatrix.outputs.REGION_MATRIX) }}
+    steps:
+      - name: Echo deployment target
+        run: echo "Deploying to ${{ matrix.region }} in namespace ${{ inputs.namespace }}"          
+
   aks-cluster-setup-np:
     name: 'Setting up AKS in [${{ inputs.environment }}] [${{ inputs.location }}]'
     if: inputs.environment == 'nonprod'
