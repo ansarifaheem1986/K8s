@@ -56,7 +56,7 @@ on:
 
 jobs:
   BuildMatrix:
-    runs-on: ubuntu-latest-aa
+    runs-on: ubuntu-latest
     outputs:
       REGION_MATRIX: ${{setps.set-matrix.outputs.region_matrix}}
         echo "$REGION_MATRIX"
