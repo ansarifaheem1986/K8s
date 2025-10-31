@@ -57,13 +57,17 @@ jobs:
     steps:
       - id: set-matrix
         run: |
-          if [[ "${{ inputs.environment }}" == "dev" ]]; then 
-            matrix='["dev-east","dev-west"]'
-          elif [[ "${{ inputs.environment }}" == "stage" ]]; then
-            matrix='["stage-east","stage-west"]'
-          elif [[ "${{ inputs.environment }}" == "prod" ]]; then
-            matrix='["prod-east","prod-west"]'
+          env="${{ inputs.environment }}"
+          loc="${{ inputs.location }}"
+
+          if [[ "$loc" == "east" ]]; then
+            matrix="[\"$env-east\"]"
+          elif [[ "$loc" == "west" ]]; then
+            matrix="[\"$env-west\"]"
+          elif [[ "$loc" == "both" ]]; then
+            matrix="[\"$env-east\",\"$env-west\"]"
           fi
+
           echo "region_matrix=$matrix" >> $GITHUB_OUTPUT
 
   Deploy:
